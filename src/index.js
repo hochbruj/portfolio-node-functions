@@ -1,31 +1,36 @@
-const Web3 = require("web3");
-const express = require("express");
-const app = express();
-const port = 8080; // default port to listen
-const apiKey = require("./secrets/apiKeys.json");
+const Web3 = require('web3');
+const admin = require('firebase-admin');
+const apiKey = require('./secrets/apiKeys.json');
+
+//firbease initialization
+const serviceAccount = require('./secrets/serviceAccountKey.json');
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+const db = admin.firestore();
+
 //web initialization
-const ethNetwork = "https://api.archivenode.io/" + apiKey.archiveNode;
+const ethNetwork = 'https://api.archivenode.io/' + apiKey.archiveNode;
 const web3 = new Web3(new Web3.providers.HttpProvider(ethNetwork));
 
 //Aave contrcts
 const {
   LendingPoolAddressesProviderABI,
   LendingPoolAddressesProviderContract,
-} = require("./config/contracts/AaveLendingAddressProvider.json");
+} = require('./config/contracts/AaveLendingAddressProvider.json');
 
 //DAI/USDC
-const { DAIContract } = require("./config/contracts/DAI.json");
+const { DAIContract } = require('./config/contracts/DAI.json');
 
-const { LendingPoolABI } = require("./config/contracts/AaveLendingPool.json");
+const { LendingPoolABI } = require('./config/contracts/AaveLendingPool.json');
 
-// define a route handler for the default home page
-app.get("/", async (req, res) => {
-  //APY
-  const lpAddressProviderContract = new web3.eth.Contract(
-    LendingPoolAddressesProviderABI,
-    LendingPoolAddressesProviderContract["main"]
-  );
+//APY
+const lpAddressProviderContract = new web3.eth.Contract(
+  LendingPoolAddressesProviderABI,
+  LendingPoolAddressesProviderContract['main']
+);
 
+const updateApy = async () => {
   // Get the latest LendingPool contract address
   const lpAddress = await lpAddressProviderContract.methods
     .getLendingPool()
@@ -34,20 +39,40 @@ app.get("/", async (req, res) => {
   //lending pool contract
   const lendingPoolContract = new web3.eth.Contract(LendingPoolABI, lpAddress);
 
-  const block = 11633063 - 1300;
+  //start block
+  //const startBlock = await web3.eth.getBlockNumber();
+  const startBlock = 9346088;
 
-  const aaveResult = await lendingPoolContract.methods
-    .getReserveData(DAIContract["main"])
-    .call({}, block);
+  //get apy for past blocks
+  const maxEntries = 20;
+  for (i = 1; i <= maxEntries; i++) {
+    const block = startBlock - i * 240 * 24 * 2; //hours
+    const blockResult = await web3.eth.getBlock(block);
 
-  const aaveAPY = parseFloat(aaveResult.liquidityRate) / 1e25;
+    const aaveResult = await lendingPoolContract.methods
+      .getReserveData(DAIContract['main'])
+      .call({}, block);
 
-  console.log("DAI APY", aaveAPY);
+    const aaveAPY = parseFloat(aaveResult.liquidityRate) / 1e25;
 
-  res.send("All good");
-});
+    const data = {
+      timestamp: admin.firestore.Timestamp.fromMillis(
+        blockResult.timestamp * 1000
+      ),
+      block: block,
+      apy: aaveAPY,
+    };
 
-// start the Express server
-app.listen(port, () => {
-  console.log(`server started at http://localhost:${port}`);
-});
+    console.log('got from chain', data);
+
+    // Add a new document in collection "cities" with ID 'LA'
+    const dbRes = await db
+      .collection('aave')
+      .doc()
+      .set(data);
+
+    console.log('saved to db', dbRes);
+  }
+};
+
+updateApy();
