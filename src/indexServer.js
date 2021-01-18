@@ -50,7 +50,7 @@ app.get('/', async (req, res) => {
   var result = await web3.eth.getBlock(block);
 
   const aaveResult = await lendingPoolContract.methods
-    .getReserveData(DAIContract['main'])
+    .getReserveData(USDCContract['main'])
     .call({}, block);
 
   const aaveAPY = parseFloat(aaveResult.liquidityRate) / 1e25;
